@@ -30,6 +30,10 @@ public class ProxyController : ControllerBase
             return BadRequest("_proxyTargetUrl must be an absolute http or https URL");
         }
 
+        // Optional flag: whether to preserve Domain attribute in Set-Cookie headers (default: false)
+        // Presence of the query parameter enables preservation (any value or no value -> true)
+        var preserveCookieDomain = Request.Query.ContainsKey("_preserveCookieDomain");
+
         using var requestMessage = new HttpRequestMessage(new HttpMethod(Request.Method), targetUri);
 
         // Copy request headers
@@ -73,17 +77,39 @@ public class ProxyController : ControllerBase
             // Copy status code
             Response.StatusCode = (int)responseMessage.StatusCode;
 
-            // Copy response headers
+            // Copy response headers, optionally rewriting Set-Cookie Domain attribute so browser will accept cookies for the proxy origin
             foreach (var header in responseMessage.Headers)
             {
-                Response.Headers[header.Key] = header.Value.ToArray();
+                if (string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var value in header.Value)
+                    {
+                        var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
+                        Response.Headers.Append("Set-Cookie", outValue);
+                    }
+                }
+                else
+                {
+                    Response.Headers[header.Key] = header.Value.ToArray();
+                }
             }
 
             if (responseMessage.Content != null)
             {
                 foreach (var header in responseMessage.Content.Headers)
                 {
-                    Response.Headers[header.Key] = header.Value.ToArray();
+                    if (string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (var value in header.Value)
+                        {
+                            var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
+                            Response.Headers.Append("Set-Cookie", outValue);
+                        }
+                    }
+                    else
+                    {
+                        Response.Headers[header.Key] = header.Value.ToArray();
+                    }
                 }
 
                 // Some headers are not allowed to be set on the response
@@ -102,5 +128,25 @@ public class ProxyController : ControllerBase
         {
             return StatusCode(500, ex.Message);
         }
+    }
+
+    private static string RemoveDomainFromSetCookie(string setCookie)
+    {
+        if (string.IsNullOrEmpty(setCookie))
+            return setCookie;
+
+        var parts = setCookie.Split(';');
+        if (parts.Length <= 1)
+            return setCookie;
+
+        var kept = parts.Where(p =>
+        {
+            var s = p.Trim();
+            var eq = s.IndexOf('=');
+            var key = eq >= 0 ? s.Substring(0, eq).Trim() : s;
+            return !string.Equals(key, "Domain", StringComparison.OrdinalIgnoreCase);
+        }).ToArray();
+
+        return string.Join("; ", kept).Trim();
     }
 }
