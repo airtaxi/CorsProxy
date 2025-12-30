@@ -60,7 +60,7 @@ public class ProxyController : ControllerBase
 
             foreach (var header in response.Headers)
             {
-                if (!header.Key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase))
+                if (!header.Key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("content-disposition", StringComparison.CurrentCultureIgnoreCase))
                     HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
             }
 
@@ -68,12 +68,25 @@ public class ProxyController : ControllerBase
             {
                 foreach (var header in response.Content.Headers)
                 {
-                    if (header.Key.ToLower() != "content-length" && header.Key.ToLower() != "transfer-encoding")
-                        HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
+                    var key = header.Key;
+                    if (key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) || key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase) || key.Equals("content-disposition", StringComparison.CurrentCultureIgnoreCase))
+                        continue;
+
+                    HttpContext.Response.Headers.TryAdd(key, header.Value.ToString());
                 }
+
                 var content = await response.Content.ReadAsByteArrayAsync();
                 var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-                return File(content, contentType);
+
+                // Ensure browser will render inline instead of forcing download
+                HttpContext.Response.Headers.Remove("Content-Disposition");
+                HttpContext.Response.Headers["Content-Disposition"] = "inline";
+
+                HttpContext.Response.ContentType = contentType;
+                HttpContext.Response.ContentLength = content.Length;
+
+                await HttpContext.Response.Body.WriteAsync(content, 0, content.Length, HttpContext.RequestAborted);
+                return new EmptyResult();
             }
             else
             {
