@@ -16,7 +16,7 @@ public class ProxyController : ControllerBase
     }
 
     [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS")]
-    public async Task Proxy()
+    public async Task<IActionResult> Proxy()
     {
         HttpContext.Request.EnableBuffering();
         HttpContext.Request.Body.Position = 0;
@@ -24,16 +24,19 @@ public class ProxyController : ControllerBase
         var targetUrl = HttpContext.Request.Query["_proxyTargetUrl"].FirstOrDefault();
         if (string.IsNullOrEmpty(targetUrl))
         {
-            HttpContext.Response.StatusCode = 400;
-            await HttpContext.Response.WriteAsync("Missing _proxyTargetUrl");
-            return;
+            return BadRequest("Missing _proxyTargetUrl");
+        }
+
+        if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri))
+        {
+            return BadRequest("Invalid _proxyTargetUrl");
         }
 
         using var client = _httpClientFactory.CreateClient();
         var request = new HttpRequestMessage
         {
             Method = new HttpMethod(HttpContext.Request.Method),
-            RequestUri = new Uri(targetUrl)
+            RequestUri = uri
         };
 
         foreach (var header in HttpContext.Request.Headers)
@@ -49,22 +52,37 @@ public class ProxyController : ControllerBase
                 request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(HttpContext.Request.ContentType);
         }
 
-        var response = await client.SendAsync(request, HttpContext.RequestAborted);
-
-        HttpContext.Response.StatusCode = (int)response.StatusCode;
-
-        foreach (var header in response.Headers)
+        try
         {
-            HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
-        }
+            var response = await client.SendAsync(request, HttpContext.RequestAborted);
 
-        if (response.Content != null)
-        {
-            foreach (var header in response.Content.Headers)
+            HttpContext.Response.StatusCode = (int)response.StatusCode;
+
+            foreach (var header in response.Headers)
             {
-                HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
+                if (!header.Key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase))
+                    HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
             }
-            await response.Content.CopyToAsync(HttpContext.Response.Body);
+
+            if (response.Content != null)
+            {
+                foreach (var header in response.Content.Headers)
+                {
+                    if (header.Key.ToLower() != "content-length" && header.Key.ToLower() != "transfer-encoding")
+                        HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
+                }
+                var content = await response.Content.ReadAsByteArrayAsync();
+                var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+                return File(content, contentType);
+            }
+            else
+            {
+                return StatusCode((int)response.StatusCode);
+            }
+        }
+        catch (Exception)
+        {
+            return StatusCode(502, "Bad Gateway");
         }
     }
 }
