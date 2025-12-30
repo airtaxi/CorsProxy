@@ -36,10 +36,14 @@ public class ProxyController : ControllerBase
 
         using var requestMessage = new HttpRequestMessage(new HttpMethod(Request.Method), targetUri);
 
+        // Set Host header from target URI (include port when non-default)
+        var hostHeader = targetUri.IsDefaultPort ? targetUri.Host : $"{targetUri.Host}:{targetUri.Port}";
+        requestMessage.Headers.Host = hostHeader;
+
         // Copy request headers
         foreach (var header in Request.Headers)
         {
-            // Skip Host header - HttpClient will set it
+            // Skip Host header - we set it from the target URI above
             if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
                 continue;
 
