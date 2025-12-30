@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System;
+using System.Linq;
 
 namespace CorsProxy.Controllers;
 
@@ -18,84 +20,87 @@ public class ProxyController : ControllerBase
     [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS")]
     public async Task<IActionResult> Proxy()
     {
-        HttpContext.Request.EnableBuffering();
-        HttpContext.Request.Body.Position = 0;
+        var target = Request.Query["_proxyTargetUrl"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(target))
+            return BadRequest("Missing required query parameter: _proxyTargetUrl");
 
-        var targetUrl = HttpContext.Request.Query["_proxyTargetUrl"].FirstOrDefault();
-        if (string.IsNullOrEmpty(targetUrl))
+        if (!Uri.TryCreate(target, UriKind.Absolute, out var targetUri) ||
+            (targetUri.Scheme != Uri.UriSchemeHttp && targetUri.Scheme != Uri.UriSchemeHttps))
         {
-            return BadRequest("Missing _proxyTargetUrl");
+            return BadRequest("_proxyTargetUrl must be an absolute http or https URL");
         }
 
-        if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri))
+        using var requestMessage = new HttpRequestMessage(new HttpMethod(Request.Method), targetUri);
+
+        // Copy request headers
+        foreach (var header in Request.Headers)
         {
-            return BadRequest("Invalid _proxyTargetUrl");
+            // Skip Host header - HttpClient will set it
+            if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Try to add to request headers; if that fails, add to content headers
+            if (!requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
+            {
+                // We'll create content below if needed
+            }
         }
 
-        using var client = _httpClientFactory.CreateClient();
-        var request = new HttpRequestMessage
+        // Copy content (if any)
+        if (Request.ContentLength > 0 || !HttpMethods.IsGet(Request.Method) && !HttpMethods.IsHead(Request.Method) && !HttpMethods.IsDelete(Request.Method))
         {
-            Method = new HttpMethod(HttpContext.Request.Method),
-            RequestUri = uri
-        };
+            // Create StreamContent from the incoming request body
+            var streamContent = new StreamContent(Request.Body);
 
-        foreach (var header in HttpContext.Request.Headers)
-        {
-            if (header.Key.ToLower() != "host")
-                request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToString());
+            // Move any headers that weren't added to requestMessage.Headers into content headers
+            foreach (var header in Request.Headers)
+            {
+                if (!requestMessage.Headers.Contains(header.Key))
+                {
+                    streamContent.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+                }
+            }
+
+            requestMessage.Content = streamContent;
         }
 
-        if (HttpContext.Request.Body != null)
-        {
-            request.Content = new StreamContent(HttpContext.Request.Body);
-            if (!string.IsNullOrEmpty(HttpContext.Request.ContentType))
-                request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(HttpContext.Request.ContentType);
-        }
+        var client = _httpClientFactory.CreateClient();
 
         try
         {
-            var response = await client.SendAsync(request, HttpContext.RequestAborted);
+            using var responseMessage = await client.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead);
 
-            HttpContext.Response.StatusCode = (int)response.StatusCode;
+            // Copy status code
+            Response.StatusCode = (int)responseMessage.StatusCode;
 
-            foreach (var header in response.Headers)
+            // Copy response headers
+            foreach (var header in responseMessage.Headers)
             {
-                if (!header.Key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase) && !header.Key.Equals("content-disposition", StringComparison.CurrentCultureIgnoreCase))
-                    HttpContext.Response.Headers.TryAdd(header.Key, header.Value.ToString());
+                Response.Headers[header.Key] = header.Value.ToArray();
             }
 
-            if (response.Content != null)
+            if (responseMessage.Content != null)
             {
-                foreach (var header in response.Content.Headers)
+                foreach (var header in responseMessage.Content.Headers)
                 {
-                    var key = header.Key;
-                    if (key.Equals("content-length", StringComparison.CurrentCultureIgnoreCase) || key.Equals("transfer-encoding", StringComparison.CurrentCultureIgnoreCase) || key.Equals("content-disposition", StringComparison.CurrentCultureIgnoreCase))
-                        continue;
-
-                    HttpContext.Response.Headers.TryAdd(key, header.Value.ToString());
+                    Response.Headers[header.Key] = header.Value.ToArray();
                 }
 
-                var content = await response.Content.ReadAsByteArrayAsync();
-                var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+                // Some headers are not allowed to be set on the response
+                Response.Headers.Remove("transfer-encoding");
 
-                // Ensure browser will render inline instead of forcing download
-                HttpContext.Response.Headers.Remove("Content-Disposition");
-                HttpContext.Response.Headers["Content-Disposition"] = "inline";
-
-                HttpContext.Response.ContentType = contentType;
-                HttpContext.Response.ContentLength = content.Length;
-
-                await HttpContext.Response.Body.WriteAsync(content, 0, content.Length, HttpContext.RequestAborted);
-                return new EmptyResult();
+                await responseMessage.Content.CopyToAsync(Response.Body);
             }
-            else
-            {
-                return StatusCode((int)response.StatusCode);
-            }
+
+            return new EmptyResult();
         }
-        catch (Exception)
+        catch (HttpRequestException ex)
         {
-            return StatusCode(502, "Bad Gateway");
+            return StatusCode(502, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ex.Message);
         }
     }
 }
