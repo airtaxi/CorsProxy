@@ -18,6 +18,9 @@ public class ProxyController : ControllerBase
     [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS")]
     public async Task Proxy()
     {
+        HttpContext.Request.EnableBuffering();
+        HttpContext.Request.Body.Position = 0;
+
         var targetUrl = HttpContext.Request.Query["_proxyTargetUrl"].FirstOrDefault();
         if (string.IsNullOrEmpty(targetUrl))
         {
