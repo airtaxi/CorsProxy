@@ -47,11 +47,20 @@ public class ProxyController : ControllerBase
             if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            // Try to add to request headers; if that fails, add to content headers
-            if (!requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
+            // List of content headers (must only be set on content)
+            var contentHeaderNames = new[]
             {
-                // We'll create content below if needed
+                "Content-Type", "Content-Length", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Location", "Content-MD5", "Content-Range"
+            };
+
+            if (contentHeaderNames.Contains(header.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                // Will be handled below if content exists
+                continue;
             }
+
+            // Try to add to request headers
+            requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
         }
 
         // Copy content (if any)
@@ -60,10 +69,16 @@ public class ProxyController : ControllerBase
             // Create StreamContent from the incoming request body
             var streamContent = new StreamContent(Request.Body);
 
-            // Move any headers that weren't added to requestMessage.Headers into content headers
+            // List of content headers
+            var contentHeaderNames = new[]
+            {
+                "Content-Type", "Content-Length", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Location", "Content-MD5", "Content-Range"
+            };
+
+            // Move any content headers from the incoming request into content headers
             foreach (var header in Request.Headers)
             {
-                if (!requestMessage.Headers.Contains(header.Key))
+                if (contentHeaderNames.Contains(header.Key, StringComparer.OrdinalIgnoreCase))
                 {
                     streamContent.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
                 }
