@@ -27,6 +27,10 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
         // Presence of the query parameter enables preservation (any value or no value -> true)
         var preserveCookieDomain = Request.Query.ContainsKey("_preserveCookieDomain");
 
+        // If _cookieString is present, use it as the Cookie header value
+        var cookieString = Request.Query["_cookieString"].FirstOrDefault();
+        var hasCustomCookie = !string.IsNullOrEmpty(cookieString);
+
         using var requestMessage = new HttpRequestMessage(new HttpMethod(Request.Method), targetUri);
 
         // Set Host header from target URI (include port when non-default)
@@ -43,6 +47,9 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
                 continue;
             // Skip X-Forwarded-For header - we will overwrite it with client IP
             if (string.Equals(header.Key, forwardedForKey, StringComparison.OrdinalIgnoreCase))
+                continue;
+            // If custom cookie is set, skip original Cookie header
+            if (hasCustomCookie && string.Equals(header.Key, "Cookie", StringComparison.OrdinalIgnoreCase))
                 continue;
             // List of content headers (must only be set on content)
             var contentHeaderNames = new[]
@@ -62,6 +69,12 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
         {
             requestMessage.Headers.Remove(forwardedForKey);
             requestMessage.Headers.TryAddWithoutValidation(forwardedForKey, clientIp);
+        }
+        // If custom cookie string is present, set it as the Cookie header
+        if (hasCustomCookie)
+        {
+            requestMessage.Headers.Remove("Cookie");
+            requestMessage.Headers.TryAddWithoutValidation("Cookie", cookieString);
         }
 
         // Copy content (if any)
@@ -107,6 +120,10 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
                         var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
                         outValue = EnsureSameSiteNone(outValue);
                         Response.Headers.Append("Set-Cookie", outValue);
+                        if (hasCustomCookie)
+                        {
+                            Response.Headers.Append("Cookie", outValue);
+                        }
                     }
                 }
                 else
@@ -126,6 +143,10 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
                             var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
                             outValue = EnsureSameSiteNone(outValue);
                             Response.Headers.Append("Set-Cookie", outValue);
+                            if (hasCustomCookie)
+                            {
+                                Response.Headers.Append("Cookie", outValue);
+                            }
                         }
                     }
                     else
