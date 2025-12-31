@@ -8,6 +8,7 @@ A simple CORS proxy server built with ASP.NET Core (.NET 10) that forwards HTTP 
 - Forwards request headers and body intact
 - Returns response headers and body as-is
 - Includes CORS configuration to allow cross-origin requests
+- Supports custom cookie injection and cookie echoing via `_cookieString` parameter
 
 ## Usage
 
@@ -19,6 +20,7 @@ Options:
 
 - `_proxyTargetUrl` (required): the absolute http or https URL to forward the request to.
 - `_preserveCookieDomain` (optional, default: `false`): presence of this parameter enables preservation of the `Domain` attribute in `Set-Cookie` response headers from the target. If the parameter is omitted (default), the proxy removes the `Domain` attribute so the browser will accept the cookie for the proxy origin.
+- `_cookieString` (optional): if present, this value will be used as the `Cookie` header for the outgoing request (the original request's `Cookie` header will be ignored). In addition, if the response contains any `Set-Cookie` headers, the proxy will also add a `Cookie` header to the response with the same value(s) as the `Set-Cookie` header(s).
 
 Example:
 
@@ -35,6 +37,14 @@ GET /proxy?_proxyTargetUrl=https://api.example.com/data&_preserveCookieDomain
 ```
 
 You may also pass a value (e.g. `_preserveCookieDomain=true`); the proxy treats any presence of the parameter as `true`.
+
+To override the outgoing Cookie header and echo Set-Cookie as Cookie in the response:
+
+```http
+GET /proxy?_proxyTargetUrl=https://api.example.com/data&_cookieString=foo%3Dbar%3B+baz%3Dqux
+```
+
+This will send `Cookie: foo=bar; baz=qux` to the target, and if the response contains any `Set-Cookie` headers, the proxy will also add a `Cookie` header to the response with the same value(s).
 
 ## License
 
