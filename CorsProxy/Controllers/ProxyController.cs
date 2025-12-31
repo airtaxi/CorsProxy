@@ -8,15 +8,8 @@ namespace CorsProxy.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public class ProxyController : ControllerBase
+public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerBase
 {
-    private readonly IHttpClientFactory _httpClientFactory;
-
-    public ProxyController(IHttpClientFactory httpClientFactory)
-    {
-        _httpClientFactory = httpClientFactory;
-    }
-
     [AcceptVerbs("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS")]
     public async Task<IActionResult> Proxy()
     {
@@ -60,7 +53,7 @@ public class ProxyController : ControllerBase
             }
 
             // Try to add to request headers
-            requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+            requestMessage.Headers.TryAddWithoutValidation(header.Key, [.. header.Value]);
         }
 
         // Copy content (if any)
@@ -80,14 +73,14 @@ public class ProxyController : ControllerBase
             {
                 if (contentHeaderNames.Contains(header.Key, StringComparer.OrdinalIgnoreCase))
                 {
-                    streamContent.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+                    streamContent.Headers.TryAddWithoutValidation(header.Key, [.. header.Value]);
                 }
             }
 
             requestMessage.Content = streamContent;
         }
 
-        var client = _httpClientFactory.CreateClient();
+        var client = httpClientFactory.CreateClient();
 
         try
         {
@@ -162,7 +155,7 @@ public class ProxyController : ControllerBase
         {
             var s = p.Trim();
             var eq = s.IndexOf('=');
-            var key = eq >= 0 ? s.Substring(0, eq).Trim() : s;
+            var key = eq >= 0 ? s[..eq].Trim() : s;
             return !string.Equals(key, "Domain", StringComparison.OrdinalIgnoreCase);
         }).ToArray();
 
