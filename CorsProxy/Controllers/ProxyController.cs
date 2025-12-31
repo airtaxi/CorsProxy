@@ -105,6 +105,7 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
                     foreach (var value in header.Value)
                     {
                         var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
+                        outValue = EnsureSameSiteNone(outValue);
                         Response.Headers.Append("Set-Cookie", outValue);
                     }
                 }
@@ -123,6 +124,7 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
                         foreach (var value in header.Value)
                         {
                             var outValue = preserveCookieDomain ? value : RemoveDomainFromSetCookie(value);
+                            outValue = EnsureSameSiteNone(outValue);
                             Response.Headers.Append("Set-Cookie", outValue);
                         }
                     }
@@ -168,5 +170,20 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
         }).ToArray();
 
         return string.Join("; ", kept).Trim();
+    }
+
+    private static string EnsureSameSiteNone(string setCookie)
+    {
+        if (string.IsNullOrEmpty(setCookie))
+            return setCookie;
+        // Already has SameSite=None or SameSite=Strict/Lax, do not modify
+        if (setCookie.IndexOf("SameSite=", StringComparison.OrdinalIgnoreCase) >= 0)
+            return setCookie;
+        // Add Secure as SameSite=None will be ignored without Secure attribute
+        var result = setCookie;
+        if (setCookie.IndexOf("Secure", StringComparison.OrdinalIgnoreCase) < 0)
+            result += "; Secure";
+        result += "; SameSite=None";
+        return result;
     }
 }
