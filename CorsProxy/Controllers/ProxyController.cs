@@ -34,26 +34,34 @@ public class ProxyController(IHttpClientFactory httpClientFactory) : ControllerB
         requestMessage.Headers.Host = hostHeader;
 
         // Copy request headers
+        var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var forwardedForKey = "X-Forwarded-For";
         foreach (var header in Request.Headers)
         {
             // Skip Host header - we set it from the target URI above
             if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
                 continue;
-
+            // Skip X-Forwarded-For header - we will overwrite it with client IP
+            if (string.Equals(header.Key, forwardedForKey, StringComparison.OrdinalIgnoreCase))
+                continue;
             // List of content headers (must only be set on content)
             var contentHeaderNames = new[]
             {
                 "Content-Type", "Content-Length", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Location", "Content-MD5", "Content-Range"
             };
-
             if (contentHeaderNames.Contains(header.Key, StringComparer.OrdinalIgnoreCase))
             {
                 // Will be handled below if content exists
                 continue;
             }
-
             // Try to add to request headers
             requestMessage.Headers.TryAddWithoutValidation(header.Key, [.. header.Value]);
+        }
+        // Always set X-Forwarded-For to client IP only
+        if (!string.IsNullOrEmpty(clientIp))
+        {
+            requestMessage.Headers.Remove(forwardedForKey);
+            requestMessage.Headers.TryAddWithoutValidation(forwardedForKey, clientIp);
         }
 
         // Copy content (if any)
