@@ -8,7 +8,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(["https://nsupload.ariaontheplanetes.com"])
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials();
